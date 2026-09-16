@@ -1,0 +1,74 @@
+name: Build Dust3D 1.1.6 Viewport
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Download Dust3D 1.1.6
+        shell: powershell
+        run: |
+          git clone --depth 1 --branch 1.1.6 https://github.com/huxingyi/dust3d.git dust3d
+
+      - name: Restore RC6 viewport toggle
+        shell: powershell
+        run: |
+          $file = "dust3d\application\sources\document_window.cc"
+          $content = Get-Content $file -Raw
+
+          $old = "m_modelRenderWidget->toggleRotation();"
+          $count = ([regex]::Matches($content, [regex]::Escape($old))).Count
+
+          if ($count -ne 1) {
+              throw "Expected exactly one model rotation call, found $count"
+          }
+
+          $content = $content.Replace(
+              "m_modelRenderWidget->toggleRotation();",
+              "toggleRotation();"
+          )
+
+          $content = $content.Replace(
+              'tr("Toggle Rotation")',
+              'tr("Toggle Viewport")'
+          )
+
+          Set-Content -Path $file -Value $content -NoNewline
+
+      - name: Install Qt 5.15.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+
+      - name: Build Dust3D
+        shell: cmd
+        working-directory: dust3d\application
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          qmake application.pro -spec win32-msvc CONFIG+=release
+          set CL=/MP
+          nmake -f Makefile.Release
+
+      - name: Deploy Qt libraries
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item "dust3d\application\release\dust3d.exe" "package\dust3d.exe"
+          windeployqt --release --compiler-runtime "package\dust3d.exe"
+
+      - name: Create ZIP
+        shell: powershell
+        run: |
+          Compress-Archive -Path package\* -DestinationPath dust3d-1.1.6-viewport-windows.zip
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: dust3d-1.1.6-viewport-windows
+          path: dust3d-1.1.6-viewport-windows.zip
